@@ -1,0 +1,119 @@
+1. 解析器组件
+		- 解析器组件是用来解析用户请求的数据的（application/json), content-type
+		- 必须继承APIView
+		- request.data触发解析
+		
+	2. 序列化组件，接口设计
+		2.1 Django自带的serializer
+			2.1.1 from django.serializers import serialize
+			2.1.2 origin_data = Book.objects.all()
+			2.1.3 serialized_data = serialize("json", origin_data)
+		2.2 DRF的序列化组件
+			- get接口设计
+				2.2.1 from rest_framework import serializers
+				2.2.2 创建一个序列化类
+					  # 第一步 导入
+					from rest_framework import serializers
+					from .models import Book
+
+					# 第二步 model方法，解决字段多的问题
+	
+					class BookSerializer(serializers.ModelSerializer):
+						class Meta:
+							model = Book
+							fields = "__all__" # 表示全部字段,也可以用元组包括所要选择的字段 例如('title','price')
+							# extra_kwargs　表示　publish和authors字段是只写的 除了
+							extra_kwargs = {
+								'publish':{'write_only':True},
+								'authors':{'write_only':True},
+							}
+							# ready_only 表示该字段只读
+							publish_name = serializers.CharField(max_length=32,read_only=True,source='publish.name')
+							publish_city = serializers.CharField(max_length=32,read_only=True,source='publish.city')
+							# 如果是SerializerMethodField()类型的字段则会自动找到以get开头的加上_字段名 的 get_authors_list的方法
+							authors_list = serializers.SerializerMethodField()
+							# write_only_fields = ('publish', 'authors')
+							def get_authors_list(self, book_obj):
+								# 拿到queryset之后开始循环[{}，{}，{}，...]
+								author_list = list()
+								for author in book_obj.authors.all():
+									author_list.append(author.name)
+								return author_list
+	
+					2.2.3 开始序列化
+							origin_data = Book.objects.all()
+							serialized_data = BookSerializer(origin_data, many=True)
+	
+							return Response(serialized_data.data)
+			
+			- post接口设计
+				总结：
+					1. serializers.Serializer无法插入数据，只能自己实现create
+					2. 字段太多，不能自动序列化
+			- get单条数据接口设计
+				1. 定义url
+				2. 获取queryset数据对象
+				3. 开始序列化：serialized_data = BookSerializer(book_obj, many=False)
+				4. 返回数据：serialized_data.data
+			- delete
+			- put
+				1. 定义url
+				2. 获取数据对象
+					2.1 book_obj = Book.objects.get(pk=1)
+				3. 开始序列化（验证数据，save()）
+					2.2 verified_data = BookSerializer(instance=book_obj, many=False)
+				4. 验证成功写入数据库，验证失败返回错误
+					4.1 verified_data.is_valid()
+					
+				class BookView(APIView):
+					# get 接口
+					def get(self, request):
+						# 第三步，获取queryset
+						origin_data = Book.objects.all()
+	
+						# 第四步，开始序列化
+						serialized_data = BookSerializer(origin_data, many=True)
+	
+						return Response(serialized_data.data)
+					# post接口
+					def post(self, request):
+	
+						verified_data = BookSerializer(data=request.data)
+	
+						if verified_data.is_valid():
+							book = verified_data.save()
+							authors = Author.objects.filter(nid__in=request.data['authors'])
+							book.authors.add(*authors)
+							return Response(verified_data.data)
+						else:
+							return Response(verified_data.errors)
+
+
+				class BookFilterView(APIView):
+					
+					# 含参数的get接口设计
+					def get(self, request, nid):
+						book_obj = Book.objects.get(pk=nid)
+	
+						serialized_data = BookSerializer(book_obj, many=False)
+	
+						return Response(serialized_data.data)
+					# put接口 (更新接口设计)
+					def put(self, request, nid):
+						book_obj = Book.objects.get(pk=nid)
+	
+						verified_data = BookSerializer(data=request.data, instance=book_obj)
+	
+						if verified_data.is_valid():
+							verified_data.save()
+							return Response(verified_data.data)
+						else:
+							return Response(verified_data.errors)
+					# delete 接口（删除接口设计）
+					def delete(self, request, nid):
+						book_obj = Book.objects.get(pk=nid).delete()
+	
+						return Response()
+	
+	视图组件
+		- 视图组件是用来优化接口逻辑
